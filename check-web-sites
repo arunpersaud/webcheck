@@ -1,0 +1,230 @@
+#!/usr/bin/python3
+"""
+Usage:
+   check-web-sites run
+   check-web-sites listemails
+   check-web-sites addemail <name> <email>
+   check-web-sites removeemail (<name>|<email>|<nr>)
+   check-web-sites listurls
+   check-web-sites add <name> <url>
+   check-web-sites remove (<name>|<url>|<nr>)
+   check-web-sites set_from <email>
+   check-web-sites config
+
+"""
+import requests
+import appdirs
+from bs4 import BeautifulSoup, Comment
+import configparser
+import difflib
+import docopt
+from pathlib import Path
+import smtplib
+from email.mime.text import MIMEText
+import sys
+
+commands = docopt.docopt(__doc__)
+# print(commands)
+
+cachedir = Path(appdirs.user_cache_dir('webcheck', 'arun'))
+configdir = Path(appdirs.user_data_dir('webcheck', 'arun'))
+configfile = configdir / 'config.ini'
+
+cachedir.mkdir(parents=True, exist_ok=True)
+configdir.mkdir(parents=True, exist_ok=True)
+
+config = configparser.ConfigParser()
+config.read(configfile)
+
+for sec in ['Emails', 'Urls', 'From']:
+    if not sec in config.sections():
+        config[sec] = {}
+with configfile.open('w') as f:
+    config.write(f)
+
+emails = config['Emails']
+urls = config['Urls']
+
+from_name = config['From'].get('name', None)
+from_email = config['From'].get('email', None)
+
+if commands['run']:
+    if not emails:
+        print('No emails defined.')
+        sys.exit(1)
+    if not urls:
+        print('No urls defined.')
+        sys.exit(2)
+    if not from_email:
+        print('Need to define a from email using the set_from command.')
+        sys.exit(3)
+
+    email_text = []
+    for name, url in urls.items():
+        tmpdir = cachedir / name
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        tmpfile = tmpdir / 'page'
+        r = requests.get(url)
+        if r.status_code not in [200]:
+            print(f'got bad status code {r.status} for {url}')
+            continue
+        r = BeautifulSoup(r.text, 'html.parser')
+        # only look at the body of the page
+        r = r.find('body')
+        # also remove comments
+        for element in r(text=lambda text: isinstance(text, Comment)):
+            element.extract()
+        # and remove scripts
+        [s.extract() for s in r('script')]
+        # if an old version doesn't exist, just save the new page
+        if tmpfile.exists():
+            with tmpfile.open('r') as f:
+                content = f.read()
+            diff = difflib.unified_diff(r.prettify().splitlines(), content.splitlines())
+            diff_text = [d for d in diff]
+            if diff_text:
+                email_text.append(f'\nGot changes in {name} at {url}:')
+                email_text += diff_text[4:]  # skip the file name part which is not set anyway
+        with tmpfile.open('w') as f:
+            f.write(r.prettify())
+    if email_text:
+        s = smtplib.SMTP('localhost')
+        for name, email in emails.items():
+            msg = MIMEText(f'Hello {name}\n' +
+                           '\n'.join(email_text) +
+                           '\n\nHave a great day\n\n   Your friendly webcheck service\n\n')
+            msg['Subject'] = f'[Webcheck] found updates to some webpages'
+            msg['From'] = 'Arun Persaud <apersaud@lbl.gov>'
+            msg['To'] = f'{name} <{email}>'
+            s.sendmail('Arun Persaud <apersaud@lbl.gov>', [f'{name} <{email}>'], msg.as_string())
+        s.quit()
+
+elif commands['listemails']:
+    if not emails:
+        print('No email addresses configured')
+    else:
+        for i, (name, email) in enumerate(emails.items()):
+            print(f'{i:2d}  {name} -> {email}')
+
+elif commands['listurls']:
+    if not emails:
+        print('No urls configured')
+    else:
+        for i, (name, url) in enumerate(urls.items()):
+            print(f'{i:2d}  {name} -> {url}')
+
+elif commands['set_from']:
+    email = commands['<email>'].strip()
+    if not '<' in email:
+        name = 'webcheck'
+    else:
+        tmp = email.split('<')
+        name = tmp[0].strip()
+        email = tmp[1][:-1]
+    config['From']['name'] = name
+    config['From']['email'] = email
+    with configfile.open('w') as f:
+        config.write(f)
+
+elif commands['config']:
+    print(f'The config file can be found at {configfile}')
+    print(f'The cache directory can be found at {cachedir}')
+
+elif commands['addemail']:
+    email = commands['<email>']
+    name = commands['<name>']
+    if not '@' in email:
+        print('Probably not a valid email...skipping')
+    else:
+        config['Emails'][name] = email
+    with configfile.open('w') as f:
+        config.write(f)
+    print(f'Added email {email} for {name}.')
+
+elif commands['add']:
+    url = commands['<url>']
+    name = commands['<name>']
+    config['Urls'][name] = url
+    with configfile.open('w') as f:
+        config.write(f)
+    print(f'Added url {url} for {name}.')
+
+elif commands['remove']:
+    nr = commands['<name>']
+    try:
+        nr = int(nr)
+    except ValueError:
+        if nr.startswith('http'):
+            url = nr.lower()
+            nr = None
+            name = None
+        else:
+            name = nr
+            url = None
+            nr = None
+    if nr is not None:
+        for i, (config_name, config_url) in enumerate(urls.items()):
+            if i == nr:
+                ret = config['Urls'].pop(config_name, None)
+                if ret:
+                    print(f'Deleted url for {config_name}')
+                break
+        else:
+            print(f'Could not find entry for nr {nr} in Urls')
+    elif name:
+        ret = config['Urls'].pop(name, None)
+        if ret:
+            print(f'Deleted url for {name}')
+        else:
+            print(f'Could not find entry for {name} in Urls')
+    elif url:
+        for i, (name, config_url) in enumerate(urls.items()):
+            if url == config_url:
+                ret = config['Urls'].pop(name, None)
+                if ret:
+                    print(f'Deleted url for {name}')
+                break
+        else:
+            print(f'Could not find entry for {url} in Urls')
+    with configfile.open('w') as f:
+        config.write(f)
+
+elif commands['removeemail']:
+    nr = commands['<name>']
+    try:
+        nr = int(nr)
+    except ValueError:
+        if '@' in nr:
+            email = nr.lower()
+            nr = None
+            name = None
+        else:
+            name = nr
+            email = None
+            nr = None
+    if nr is not None:
+        for i, (name, url) in enumerate(emails.items()):
+            if i == nr:
+                ret = config['Emails'].pop(name, None)
+                if ret:
+                    print(f'Deleted email for {name}')
+                break
+        else:
+            print(f'Could not find entry for nr {nr} in Emails')
+    elif name:
+        ret = config['Emails'].pop(name, None)
+        if ret:
+            print(f'Deleted email for {name}')
+        else:
+            print(f'Could not find entry for {name} in Emails')
+    elif email:
+        for i, (name, config_email) in enumerate(emails.items()):
+            if email == config_email.lower():
+                ret = config['Emails'].pop(name, None)
+                if ret:
+                    print(f'Deleted Email for {name}')
+                break
+        else:
+            print(f'Could not find entry for {email} in Emails')
+    with configfile.open('w') as f:
+        config.write(f)

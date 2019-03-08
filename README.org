@@ -1,0 +1,20 @@
+* What it does
+
+  This is a short script that can be called manually (or using cron)
+  to check if several web pages got updated.  If so, it will send an
+  email to a predefined list of people.
+
+  The program can be controlled using the command line (e.g. one can
+  add/remove email addresses and urls).
+
+  It stores information in a config file in the users config
+  directory and also uses the local cache dir to store webpage
+  information.
+
+  For the web pages, scripts and comments are ignored and only the
+  body of the page is saved and compared to the new version.
+
+* Contribute
+
+  Feel free to submit pull requests ;)
+
