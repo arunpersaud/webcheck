@@ -76,6 +76,12 @@ if commands['run']:
             element.extract()
         # and remove scripts
         [s.extract() for s in r('script')]
+        # remove all id attributes
+        for tag in r.findAll(True):
+            attrs = dict(tag.attrs)
+            for attr in attrs:
+                if attr in ['id']:
+                    del tag.attrs[attr]
         # if an old version doesn't exist, just save the new page
         if tmpfile.exists():
             with tmpfile.open('r') as f:
