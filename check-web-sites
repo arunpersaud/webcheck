@@ -86,7 +86,7 @@ if commands['run']:
         if tmpfile.exists():
             with tmpfile.open('r') as f:
                 content = f.read()
-            diff = difflib.unified_diff(r.prettify().splitlines(), content.splitlines())
+            diff = difflib.unified_diff(content.splitlines(), r.prettify().splitlines())
             diff_text = [d for d in diff]
             if diff_text:
                 email_text.append(f'\nGot changes in {name} at {url}:')
